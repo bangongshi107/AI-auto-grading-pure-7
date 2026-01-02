@@ -333,7 +333,7 @@ class ConfigManager:
             config['UI'] = {'subject': str(self.subject)}
             config['Auto'] = {
                 'cycle_number': str(self.cycle_number), 
-                'wait_time': str(self.wait_time),
+                'wait_time': f"{self.wait_time:.1f}",  # 格式化为1位小数，避免浮点精度问题
                 'api_reset_interval': str(self.api_reset_interval)
             }
             config['DualEvaluation'] = {'enabled': str(self.dual_evaluation_enabled), 'score_diff_threshold': str(self.score_diff_threshold)}
