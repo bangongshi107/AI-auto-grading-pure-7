@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import time
 import json
+import sys
 from datetime import datetime, timezone
 from threading import Lock, local
 
@@ -135,6 +136,37 @@ class ApiService:
         self.logger = logging.getLogger(__name__)
         # 初始化当前题目索引，虽然主要逻辑在AutoThread中，但这里有个默认值更安全
         self.current_question_index = 1
+
+    def _should_print_raw_ai_response(self) -> bool:
+        """是否在控制台打印AI接口的原始响应。
+
+        这是给开发者调试用的：打印的是 HTTP 原始响应体（response.text），
+        不会包含请求头里的 Authorization，因此不会主动泄露 API Key。
+        """
+        try:
+            return bool(getattr(self.config_manager, "debug_print_raw_ai_response", False))
+        except Exception:
+            return False
+
+    def _print_raw_ai_response(self, provider_name: str, url: str, status_code: int, raw_text: str) -> None:
+        """把原始 AI 响应完整输出到控制台（stdout）。"""
+        if not self._should_print_raw_ai_response():
+            return
+        try:
+            # 使用明确的 begin/end 标记，便于在控制台/日志里搜索定位。
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            sys.stdout.write(
+                f"\n========== AI RAW RESPONSE BEGIN [{provider_name}] {ts} status={status_code} =========="
+                f"\nURL: {url}\n"
+            )
+            sys.stdout.write(raw_text or "")
+            if raw_text and not raw_text.endswith("\n"):
+                sys.stdout.write("\n")
+            sys.stdout.write(f"========== AI RAW RESPONSE END [{provider_name}] ==========" + "\n")
+            sys.stdout.flush()
+        except Exception:
+            # 绝不让调试输出影响业务流程
+            pass
 
     def _get_session(self) -> requests.Session:
         """获取当前线程专属的 requests.Session。"""
@@ -484,15 +516,24 @@ class ApiService:
             response = self._get_session().post(url, headers=headers, json=payload, timeout=60)
 
             self.logger.debug(f"[{provider_name}] 收到响应: 状态码 {response.status_code}")
+
+            # 开发者调试：把原始响应完整输出到控制台（不走UI日志，不截断）。
+            self._print_raw_ai_response(provider_name, url, response.status_code, response.text)
             
             if response.status_code == 200:
-                content = self._extract_response_content(response.json(), provider)
+                try:
+                    data = response.json()
+                except Exception as e:
+                    self.logger.warning(f"[{provider_name}] 响应JSON解析失败: {e}")
+                    return None, f"API响应JSON解析失败：{e}"
+
+                content = self._extract_response_content(data, provider)
                 if content:
                     self.logger.debug(f"[{provider_name}] 成功提取响应内容")
                     return content, None
                 else:
                     self.logger.warning(f"[{provider_name}] 响应内容为空或无法解析")
-                    return None, f"API响应内容为空或无法解析。原始响应: {str(response.json())[:200]}"
+                    return None, f"API响应内容为空或无法解析。原始响应: {str(data)[:200]}"
             else:
                 error_text = response.text[:200]
                 self.logger.warning(f"[{provider_name}] API请求失败: {response.status_code}")

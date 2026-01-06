@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QMessageBox, QDialog,
                              QComboBox, QLineEdit, QCheckBox, QSpinBox, QDoubleSpinBox,
                              QPlainTextEdit, QApplication, QShortcut, QLabel, QPushButton)
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QObject
-from PyQt5.QtGui import QKeySequence, QFont, QKeyEvent, QCloseEvent
+from PyQt5.QtGui import QKeySequence, QFont, QKeyEvent, QCloseEvent, QIcon
 from PyQt5 import uic
 
 # --- 新增导入 ---
@@ -44,6 +44,29 @@ class MainWindow(QMainWindow):
             base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         ui_path = os.path.join(base_path, "setting", "七题.ui")
         uic.loadUi(ui_path, self)
+
+        # 设置窗口图标
+        try:
+            icon_path = None
+            if getattr(sys, 'frozen', False):
+                meipass = getattr(sys, '_MEIPASS', None)
+                if meipass:
+                    candidate = os.path.join(meipass, 'AI阅卷助手.ico')
+                    if os.path.exists(candidate):
+                        icon_path = candidate
+                if not icon_path:
+                    candidate = os.path.join(os.path.dirname(sys.executable), 'AI阅卷助手.ico')
+                    if os.path.exists(candidate):
+                        icon_path = candidate
+            else:
+                candidate = os.path.join(base_path, 'AI阅卷助手.ico')
+                if os.path.exists(candidate):
+                    icon_path = candidate
+
+            if icon_path:
+                self.setWindowIcon(QIcon(icon_path))
+        except Exception:
+            pass  # 图标加载失败不影响程序运行
 
         # 初始化属性
         self.answer_windows = {}

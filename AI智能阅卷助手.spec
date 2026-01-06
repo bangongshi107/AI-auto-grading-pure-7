@@ -18,8 +18,9 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 hiddenimports = collect_submodules('numpy') + collect_submodules('cv2')
 
 # 包含 PyQt5 的 Qt 平台插件，避免运行时 "could not load the Qt platform plugin" 错误
-# 并保留程序的 setting 目录作为数据文件
-datas = collect_data_files('PyQt5', subdir='Qt/plugins') + [('setting', 'setting')]
+# 并保留程序的 setting 目录作为数据文件，同时把应用图标一并打包。
+# 注意：onefile 模式下 datas 会解包到临时目录（sys._MEIPASS），运行时需要从那里取图标。
+datas = collect_data_files('PyQt5', subdir='Qt/plugins') + [('setting', 'setting'), ('AI阅卷助手.ico', '.')]
 
 a = Analysis(
     ['main.py'],

@@ -98,6 +98,11 @@ class ConfigManager:
                     'score_input_pos_step3': None
                 })
 
+        # 调试开关（开发者用）：是否在控制台打印AI接口原始响应
+        # True：打印 response.text（完整、不截断）
+        # False：不打印
+        self.debug_print_raw_ai_response = True
+
     def load_config(self):
         """加载配置文件，如果不存在则创建默认配置"""
         if not os.path.exists(self.config_file_path):
@@ -147,6 +152,9 @@ class ConfigManager:
         # 阅卷判定策略
         self.blank_answer_policy = self._get_config_safe('GradingPolicy', 'blank_answer_policy', 'zero', str)
         self.gibberish_answer_policy = self._get_config_safe('GradingPolicy', 'gibberish_answer_policy', 'manual', str)
+
+        # 调试配置
+        self.debug_print_raw_ai_response = self._get_config_safe('Debug', 'print_raw_ai_response', True, bool)
         
         # 不再从配置文件读取/写入 UI 字号与字体族（移除用户自行调整字号的设定）
         
@@ -358,6 +366,10 @@ class ConfigManager:
             config['GradingPolicy'] = {
                 'blank_answer_policy': str(getattr(self, 'blank_answer_policy', 'zero')),
                 'gibberish_answer_policy': str(getattr(self, 'gibberish_answer_policy', 'manual')),
+            }
+
+            config['Debug'] = {
+                'print_raw_ai_response': str(bool(getattr(self, 'debug_print_raw_ai_response', False)))
             }
             
             for i in range(1, self.max_questions + 1):

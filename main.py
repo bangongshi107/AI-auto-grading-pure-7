@@ -56,7 +56,7 @@ if sys.platform == 'win32':
 
 from PyQt5.QtWidgets import QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
 from PyQt5.QtCore import Qt, QTimer, QAbstractNativeEventFilter
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 from ui_components.main_window import MainWindow
 from api_service import ApiService
 from config_manager import ConfigManager
@@ -306,6 +306,16 @@ class SignalConnectionManager:
 
 class Application:
     def __init__(self):
+        # Windows 任务栏图标有时取决于 AppUserModelID（尤其是源码用 python.exe 运行时）。
+        # 提前设置它可以让任务栏/Alt-Tab 更稳定地显示自定义图标。
+        if sys.platform == 'win32':
+            try:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    'AI.AutoGrading.Pure7.AIYuJuanZhuShou'
+                )
+            except Exception:
+                pass
+
         self.app = QApplication(sys.argv)
         # 先加载配置管理器，以便应用字体可由配置控制
         self.config_manager: ConfigManager = ConfigManager()
@@ -313,6 +323,31 @@ class Application:
         try:
             self.app.setFont(QFont("微软雅黑", 11))
         except Exception:
+            pass
+        
+        # 设置应用程序图标（用于任务栏和窗口标题栏）
+        try:
+            icon_path = None
+            if getattr(sys, 'frozen', False):
+                # onefile: datas 会解包到 sys._MEIPASS；onedir: 资源可能在 exe 同目录
+                meipass = getattr(sys, '_MEIPASS', None)
+                if meipass:
+                    candidate = os.path.join(meipass, 'AI阅卷助手.ico')
+                    if os.path.exists(candidate):
+                        icon_path = candidate
+                if not icon_path:
+                    candidate = os.path.join(os.path.dirname(sys.executable), 'AI阅卷助手.ico')
+                    if os.path.exists(candidate):
+                        icon_path = candidate
+            else:
+                candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'AI阅卷助手.ico')
+                if os.path.exists(candidate):
+                    icon_path = candidate
+
+            if icon_path:
+                self.app.setWindowIcon(QIcon(icon_path))
+        except Exception:
+            # 图标加载失败不影响程序运行
             pass
         self.api_service = ApiService(self.config_manager)
         self.worker = GradingThread(self.api_service, self.config_manager)
@@ -644,8 +679,13 @@ class Application:
         self.main_window.activateWindow()  # 激活窗口
 
     def show_manual_intervention_notification(self, message, raw_feedback):
-        """当工作线程请求人工介入时调用，展示更明显的模态对话框并播放提示音。"""
-        # 标记：接下来短时间内如果收到 error_signal，不再重复弹“阅卷中断”
+        """当工作线程请求人工介入时调用，展示更明显的模态对话框并播放提示音。
+        
+        根据用户选择：
+        - 点击"我已人工处理，继续"：恢复UI状态，不停止worker（worker已自行停止）
+        - 点击"暂停并关闭"：确保worker停止
+        """
+        # 标记：接下来短时间内如果收到 error_signal，不再重复弹"阅卷中断"
         try:
             self._suppress_error_dialog_until = time.time() + 2.0
         except Exception:
@@ -666,7 +706,19 @@ class Application:
             sound_type='error',
             parent=self.main_window
         )
-        dialog.exec_()
+        result = dialog.exec_()
+        
+        # 根据用户选择处理
+        # QDialog.Accepted = 用户点击"我已人工处理，继续"
+        # QDialog.Rejected = 用户点击"暂停并关闭"
+        if result == QDialog.Rejected:
+            # 用户选择停止：确保worker被停止
+            if self.worker.isRunning():
+                self.worker.stop()
+                self.main_window.log_message("用户选择暂停，已停止自动阅卷。", True, "INFO")
+        else:
+            # 用户选择继续：worker已经因error_signal停止，这里只记录日志
+            self.main_window.log_message("用户已完成人工处理，可重新开始自动阅卷。", False, "INFO")
         
         # 对话框关闭后，确保主窗口恢复并显示在前台
         if self.main_window.isMinimized():
@@ -878,6 +930,12 @@ class Application:
             headers = ["题目编号"]
             rows_to_write = []
 
+            def _format_basis_with_newlines(text):
+                """将AI评分依据中的'；'转换为换行符，便于Excel显示"""
+                if not text:
+                    return text
+                return str(text).replace('；', '\n')
+
             if is_dual:
                 headers.extend(["API标识", "分差阈值", "学生答案摘要", "AI分项得分", "AI评分依据", "AI原始总分", "双评分差", "最终得分", "评分细则(前50字)"])
 
@@ -888,7 +946,7 @@ class Application:
                        str(record_data.get('score_diff_threshold', "未提供")),
                        record_data.get('api1_student_answer_summary', '未提供'),
                        str(record_data.get('api1_itemized_scores', [])),
-                       record_data.get('api1_scoring_basis', '未提供'),
+                       _format_basis_with_newlines(record_data.get('api1_scoring_basis', '未提供')),
                        str(record_data.get('api1_raw_score', 0.0)),
                        f"{record_data.get('score_difference', 0.0):.2f}",
                        final_total_score_str,
@@ -898,7 +956,7 @@ class Application:
                        str(record_data.get('score_diff_threshold', "未提供")),
                        record_data.get('api2_student_answer_summary', '未提供'),
                        str(record_data.get('api2_itemized_scores', [])),
-                       record_data.get('api2_scoring_basis', '未提供'),
+                       _format_basis_with_newlines(record_data.get('api2_scoring_basis', '未提供')),
                        str(record_data.get('api2_raw_score', 0.0)),
                        f"{record_data.get('score_difference', 0.0):.2f}",
                        final_total_score_str,
@@ -910,7 +968,7 @@ class Application:
                 single_row = [question_index_str,
                              record_data.get('student_answer', '无法提取'),
                              str(record_data.get('sub_scores', '未提供')),
-                             record_data.get('reasoning_basis', '无法提取'),
+                             _format_basis_with_newlines(record_data.get('reasoning_basis', '无法提取')),
                              final_total_score_str,
                              record_data.get('scoring_rubric_summary', '未配置')]
                 rows_to_write.append(single_row)
