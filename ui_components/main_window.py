@@ -86,6 +86,44 @@ class MainWindow(QMainWindow):
     #  面向老师的“人话提示”工具
     # ======================================================================
 
+    def _mask_secret(self, value: str) -> str:
+        s = (value or "").strip()
+        if not s:
+            return "(空)"
+        if len(s) <= 8:
+            return "***"
+        return f"{s[:4]}****{s[-4:]}"
+
+    def _display_name_for_field(self, field_name: str) -> str:
+        """将内部字段名转换为老师可读的中文标签。"""
+        f = (field_name or "").strip()
+        mapping = {
+            "first_api_provider": "第一组AI平台",
+            "first_api_key": "第一组密钥",
+            "first_modelID": "第一组模型ID",
+            "second_api_provider": "第二组AI平台",
+            "second_api_key": "第二组密钥",
+            "second_modelID": "第二组模型ID",
+            "dual_evaluation_enabled": "双评模式",
+            "score_diff_threshold": "分差阈值",
+            "subject": "学科",
+            "cycle_number": "循环次数",
+            "wait_time": "间隔时间(秒)",
+            "unattended_mode_enabled": "无人模式",
+        }
+        if f in mapping:
+            return mapping[f]
+
+        m = re.match(r"^question_(\d+)_enabled$", f)
+        if m:
+            return f"第{m.group(1)}题启用"
+
+        m = re.match(r"^question_(\d+)_standard_answer$", f)
+        if m:
+            return f"第{m.group(1)}题评分细则"
+
+        return f
+
     def _get_base_dir(self) -> pathlib.Path:
         """获取可写日志目录的基准路径（兼容打包/源码运行）。"""
         try:
@@ -174,12 +212,27 @@ class MainWindow(QMainWindow):
             return summary, detail
 
         if any(k in cleaned_for_parse for k in ["需人工介入", "需要人工介入", "人工介入"]):
-            # 这里不再复述多层包装，只提示下一步
+            # 【优化】尝试提取AI给出的具体原因（保留"需人工介入:"前缀，按原始文本展示）
+            reason_text = ""
+            for line in cleaned_for_parse.split('\n'):
+                line = line.strip()
+                # 跳过纯标记行
+                if line in ["需人工介入", "人工介入", "需要人工介入", "[需人工介入]"]:
+                    continue
+                if line and len(line) > 5:
+                    reason_text = line
+                    break
+            
             # 尝试保留题号信息
             q_match = re.search(r"题目\s*(\d+)", cleaned_for_parse) or re.search(r"第\s*(\d+)\s*题", cleaned_for_parse)
             q = q_match.group(1) if q_match else ""
             head = f"题目{q}：" if q else ""
-            return f"{head}需要人工介入处理。已暂停，请处理后继续。", detail
+            
+            # 如果提取到了具体原因，显示它；否则用通用提示
+            if reason_text:
+                return f"{head}{reason_text}", detail
+            else:
+                return f"{head}需要人工介入处理。已暂停，请处理后继续。", detail
 
         # 去掉常见 emoji/符号，减少干扰
         cleaned = re.sub(r"[✅❌⚠️💡]", "", original).strip()
@@ -352,24 +405,33 @@ class MainWindow(QMainWindow):
     def handle_lineEdit_save(self, field_name, value):
         if self._is_initializing: return
         self.config_manager.update_config_in_memory(field_name, value)
-        self.log_message(f"配置项 '{field_name}' 更新为: {value}")
+
+        label = self._display_name_for_field(str(field_name))
+        # 密钥类内容不在UI里展示明文
+        if str(field_name) in ["first_api_key", "second_api_key"]:
+            self.log_message(f"{label} 已更新（已隐藏）：{self._mask_secret(str(value))}")
+        else:
+            self.log_message(f"{label} 已更新：{value}")
 
     def handle_plainTextEdit_save(self, field_name, value):
         if self._is_initializing: return
         self.config_manager.update_config_in_memory(field_name, value)
         # 答案内容较长，日志可以简洁些
-        self.log_message(f"配置项 '{field_name}' 已更新")
+        label = self._display_name_for_field(str(field_name))
+        self.log_message(f"{label} 已更新")
 
     def handle_spinBox_save(self, field_name, value):
         if self._is_initializing: return
         self.config_manager.update_config_in_memory(field_name, value)
-        self.log_message(f"配置项 '{field_name}' 更新为: {value}")
+        label = self._display_name_for_field(str(field_name))
+        self.log_message(f"{label} 已更新：{value}")
     
     def handle_doubleSpinBox_save(self, field_name, value):
         """处理 QDoubleSpinBox 控件的保存"""
         if self._is_initializing: return
         self.config_manager.update_config_in_memory(field_name, value)
-        self.log_message(f"配置项 '{field_name}' 更新为: {value}")
+        label = self._display_name_for_field(str(field_name))
+        self.log_message(f"{label} 已更新：{value}")
     
     # --- 统一的 ComboBox 处理函数 ---
     def handle_comboBox_save(self, combo_box_name, ui_text):
@@ -388,18 +450,21 @@ class MainWindow(QMainWindow):
                 return
             field_name = 'first_api_provider' if combo_box_name == 'first_api_url' else 'second_api_provider'
             self.config_manager.update_config_in_memory(field_name, provider_id)
-            self.log_message(f"AI评分模型 '{field_name}' 更新为: {provider_id} ({ui_text})")
+            label = self._display_name_for_field(str(field_name))
+            self.log_message(f"{label} 已更新为：{ui_text}")
         else:
             # 处理普通ComboBox（如subject_text）
             field_name = combo_box_name.replace('_text', '')  # subject_text -> subject
             self.config_manager.update_config_in_memory(field_name, ui_text)
-            self.log_message(f"配置项 '{field_name}' 更新为: {ui_text}")
+            label = self._display_name_for_field(str(field_name))
+            self.log_message(f"{label} 已更新为：{ui_text}")
 
     def handle_checkBox_save(self, field_name, state):
         if self._is_initializing: return
         value = bool(state)
         self.config_manager.update_config_in_memory(field_name, value)
-        self.log_message(f"配置项 '{field_name}' 更新为: {value}")
+        label = self._display_name_for_field(str(field_name))
+        self.log_message(f"{label} 已更新为：{'开启' if value else '关闭'}")
 
     def _connect_direct_edit_save_signals(self):
         """连接UI控件信号到即时保存处理函数"""

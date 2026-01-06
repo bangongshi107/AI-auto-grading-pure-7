@@ -433,11 +433,11 @@ class Application:
             try:
                 user_tip = self._simplify_for_teacher(str(exc_value))
                 dialog = SimpleNotificationDialog(
-                    title="严重错误",
+                    title="程序出错",
                     message=(
-                        "程序遇到严重问题，可能需要关闭并重新打开。\n\n"
-                        f"原因（简要）：{user_tip}\n\n"
-                        "如果反复出现：请把程序目录 logs 文件夹里的最新日志发给技术人员。"
+                        "程序遇到问题，当前操作已停止。\n\n"
+                        f"原因：{user_tip}\n\n"
+                        "建议：关闭软件重新打开后再试。如果反复出现，请把 logs 文件夹发给技术人员。"
                     ),
                     sound_type='error'
                 )
@@ -574,8 +574,13 @@ class Application:
 
         # 显示简洁的完成通知
         dialog = SimpleNotificationDialog(
-            title="批次完成",
-            message="✅ 本次自动阅卷已完成！\n\n请复查AI阅卷结果，人工审核0分、满分",
+            title="本批次阅卷完成",
+            message=(
+                "✅ 本批次自动阅卷已完成！\n\n"
+                "温馨提示：\n"
+                "• 建议人工复查 0分卷 和 满分卷\n"
+                "• 阅卷记录已自动保存到‘阅卷记录’文件夹"
+            ),
             sound_type='info',
             parent=self.main_window
         )
@@ -635,10 +640,10 @@ class Application:
             user_tip = "发生错误，自动阅卷已停止。"
 
         dialog = SimpleNotificationDialog(
-            title="阅卷中断",
+            title="阅卷暂停",
             message=(
                 f"原因：{user_tip}\n\n"
-                "建议：检查网络/密钥/模型ID；确认Excel已关闭；必要时切换备用AI平台。"
+                "处理完毕后，点击“开始自动阅卷”即可继续。"
             ),
             sound_type='error',
             parent=self.main_window
@@ -664,8 +669,7 @@ class Application:
         dialog = SimpleNotificationDialog(
             title="双评分差过大",
             message=(
-                "两次评分差距过大，需要人工复核。\n\n"
-                "建议：人工查看该题答题截图，确认分数后再继续下一份。"
+                "两个AI给出的分数差超过您的设置，需要人工给分。\n\n"
             ),
             sound_type='error',
             parent=self.main_window
@@ -684,6 +688,10 @@ class Application:
         根据用户选择：
         - 点击"我已人工处理，继续"：恢复UI状态，不停止worker（worker已自行停止）
         - 点击"暂停并关闭"：确保worker停止
+        
+        参数说明（优化后）：
+        - message: AI判断的具体原因（如"学生提交的内容为风景图片，无法评分"）
+        - raw_feedback: 学生答案摘要（如"提交了一张湖岸树林的风景图片..."）
         """
         # 标记：接下来短时间内如果收到 error_signal，不再重复弹"阅卷中断"
         try:
@@ -698,10 +706,14 @@ class Application:
         if hasattr(self.main_window, 'update_ui_state'):
             self.main_window.update_ui_state(is_running=False)
 
+        # 【优化】构建用户友好的弹窗消息
+        # message 现在是 AI 的具体判断原因，不再是简单的"需人工介入"
+        display_message = message.strip() if message else "AI判断需要人工介入"
+        
         # 显示模态对话框
         dialog = ManualInterventionDialog(
-            title="人工介入",
-            message=(f"{message}\n\n请人工检查并处理。"),
+            title="需要人工处理",
+            message=(f"{display_message}\n\n请人工检查并处理当前试卷。"),
             raw_feedback=raw_feedback,
             sound_type='error',
             parent=self.main_window
