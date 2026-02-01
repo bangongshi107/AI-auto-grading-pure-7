@@ -19,6 +19,7 @@ class ConfigManager:
         if ConfigManager._initialized:
             return
         self.parser = configparser.ConfigParser(allow_no_value=True, interpolation=None)
+        self._dirty = False
 
         app_name = "AutoGraderApp"
         app_author = "Mr.Why"
@@ -34,6 +35,7 @@ class ConfigManager:
         self.max_questions = 7
         self._init_default_config()
         self.load_config()
+        self._dirty = False
         ConfigManager._initialized = True
 
     def _init_default_config(self):
@@ -108,6 +110,7 @@ class ConfigManager:
         if not os.path.exists(self.config_file_path):
             print(f"配置文件不存在，创建默认配置: {self.config_file_path}")
             self._save_config_to_file()
+            self._dirty = False
             return
         try:
             self.parser.read(self.config_file_path, encoding='utf-8')
@@ -115,6 +118,7 @@ class ConfigManager:
             print(f"配置文件格式错误，使用默认配置: {e}")
             return
         self._safe_load_config()
+        self._dirty = False
 
     def _safe_load_config(self):
         """安全地加载配置，缺失项使用默认值"""
@@ -260,6 +264,7 @@ class ConfigManager:
         """更新内存中的配置项。"""
         try:
             self._update_memory_config(field_name, value)
+            self._dirty = True
         except Exception as e:
             print(f"ConfigManager: Error updating memory for {field_name}: {e}")
 
@@ -330,6 +335,7 @@ class ConfigManager:
     def update_question_config(self, question_index, field_type, value):
         field_name = f"question_{question_index}_{field_type}"
         self._update_memory_config(field_name, value)
+        self._dirty = True
 
     def save_all_configs_to_file(self):
         return self._save_config_to_file()
@@ -409,10 +415,14 @@ class ConfigManager:
             
             with open(self.config_file_path, 'w', encoding='utf-8') as f:
                 config.write(f)
+            self._dirty = False
             return True
         except Exception as e:
             print(f"保存配置文件失败: {e}")
             return False
+
+    def is_dirty(self) -> bool:
+        return bool(self._dirty)
 
     def get_enabled_questions(self):
         return [i for i in range(1, self.max_questions + 1) if self.question_configs.get(str(i), {}).get('enabled', False)]

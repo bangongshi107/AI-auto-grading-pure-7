@@ -10,7 +10,7 @@ from typing import Union, Optional, Type, TypeVar, cast, Tuple
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QMessageBox, QDialog,
                              QComboBox, QLineEdit, QCheckBox, QSpinBox, QDoubleSpinBox,
                              QPlainTextEdit, QApplication, QShortcut, QLabel, QPushButton)
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QObject
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QObject, QTimer
 from PyQt5.QtGui import QKeySequence, QFont, QKeyEvent, QCloseEvent, QIcon
 from PyQt5 import uic
 
@@ -75,6 +75,10 @@ class MainWindow(QMainWindow):
         self._ui_cache = {}
 
         self.init_ui()
+
+        # 定时保存（主窗口控件仅保存内存，关键操作/定时写入文件）
+        self._auto_save_timer = None
+        self._start_auto_save_timer()
 
 
 
@@ -147,6 +151,41 @@ class MainWindow(QMainWindow):
             return file_path
         except Exception:
             return None
+
+    def _start_auto_save_timer(self) -> None:
+        """定时保存主窗口配置（只在有改动时写入文件）"""
+        try:
+            self._auto_save_timer = QTimer(self)
+            self._auto_save_timer.setInterval(30000)  # 30秒检查一次
+            self._auto_save_timer.timeout.connect(self._auto_save_if_dirty)
+            self._auto_save_timer.start()
+        except Exception:
+            self._auto_save_timer = None
+
+    def _auto_save_if_dirty(self) -> None:
+        """定时保存：仅在配置有变更时写入文件"""
+        try:
+            if hasattr(self, 'config_manager') and self.config_manager.is_dirty():
+                if not self.config_manager.save_all_configs_to_file():
+                    self.log_message("自动保存失败：请检查是否有文件被占用或无写入权限。", is_error=True)
+        except Exception:
+            pass
+
+    def _save_dirty_configs(self, reason: str, silent: bool = False) -> bool:
+        """关键操作前保存配置（仅有改动时才写文件）"""
+        if not hasattr(self, 'config_manager'):
+            return False
+        try:
+            if not self.config_manager.is_dirty():
+                return True
+            if not silent:
+                self.log_message(f"{reason}：检测到配置变更，正在保存...")
+            ok = self.config_manager.save_all_configs_to_file()
+            if not ok and not silent:
+                self.log_message("保存设置失败，请关闭Excel并确认有写入权限后再试。", is_error=True)
+            return ok
+        except Exception:
+            return False
 
     def _simplify_message_for_teacher(self, text: str) -> Tuple[str, str]:
         """把复杂/英文/堆栈信息压缩成老师能看懂的提示。
@@ -697,8 +736,7 @@ class MainWindow(QMainWindow):
         if not self.check_required_settings():
             return
 
-        self.log_message("尝试在运行前保存所有配置...")
-        if not self.config_manager.save_all_configs_to_file():
+        if not self._save_dirty_configs("开始自动阅卷前"):
             self.log_message("保存设置失败，自动阅卷无法开始。", is_error=True)
             self._show_message(
                 title="保存设置失败",
@@ -941,6 +979,8 @@ class MainWindow(QMainWindow):
     def test_api_connections(self):
         """测试API连接（强制测试两个API）"""
         try:
+            # 测试前若有改动，先保存
+            self._save_dirty_configs("测试API前", silent=True)
             # 测试前无需手动更新，因为 ApiService 每次都会从 ConfigManager 获取最新配置
             self.log_message("正在测试API连接...")
             success1, message1 = self.api_service.test_api_connection("first")
@@ -1005,7 +1045,7 @@ class MainWindow(QMainWindow):
 
         # 保存配置
         self.log_message("尝试在关闭程序前保存所有配置...")
-        if not self.config_manager.save_all_configs_to_file():
+        if not self._save_dirty_configs("关闭程序前", silent=True):
             self.log_message("警告：关闭程序前保存配置失败。", is_error=True)
         else:
             self.log_message("所有配置已在关闭前成功保存。")
